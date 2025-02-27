@@ -11,6 +11,10 @@ from tqdm import tqdm
 import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from functools import partial
+import os
+import joblib
+from datetime import datetime
+from ctgan.data_transformer import DataTransformer
 
 def generate_batch(batch_params):
     """Helper function to generate a single batch of data"""
@@ -40,12 +44,100 @@ def generate_batch(batch_params):
     
     return pd.DataFrame(data_batch)
 
+# Modify the ParallelMemoryAugmentedCTGAN class to handle training properly
 class ParallelMemoryAugmentedCTGAN(CTGAN):
-    def __init__(self, memory_size=1000, n_jobs=-1, **kwargs):
+    def __init__(self, memory_size=1000, n_jobs=-1, model_path='trained_ctgan_model.pkl', **kwargs):
         super().__init__(**kwargs)
         self.memory_size = memory_size
         self.memory_bank = None
         self.n_jobs = n_jobs if n_jobs > 0 else mp.cpu_count()
+        self.model_path = model_path
+        self._progress_callback = None
+
+    def fit(self, train_data, discrete_columns=(), epochs=None):
+        """Override fit method to include progress tracking"""
+        if epochs is None:
+            epochs = self._epochs
+        
+        # Validate discrete columns
+        self._validate_discrete_columns(train_data, discrete_columns)
+        
+        # Transform data for training
+        self.transformer = DataTransformer()
+        self.transformer.fit(train_data, discrete_columns)
+        train_data = self.transformer.transform(train_data)
+        
+        # Train the model
+        for epoch in range(epochs):
+            if self._progress_callback:
+                progress = epoch / epochs
+                self._progress_callback("training", progress, f"Training epoch {epoch}/{epochs}")
+            
+            # Call the parent class's fit method for each epoch
+            super().fit(train_data, [], epochs=1)  # Already transformed data
+        
+        return self
+
+    def sample(self, n):
+        """Override sample method to handle transformed data"""
+        sampled = super().sample(n)
+        return self.transformer.inverse_transform(sampled)
+
+    def _validate_discrete_columns(self, train_data, discrete_columns):
+        """Validate that discrete columns exist in the data"""
+        if len(discrete_columns) > 0:
+            if not all(column in train_data.columns for column in discrete_columns):
+                raise ValueError(
+                    "All discrete columns must exist in the training data. "
+                    f"Missing columns: {set(discrete_columns) - set(train_data.columns)}"
+                )
+
+    def set_progress_callback(self, callback):
+        """Set the progress callback function"""
+        self._progress_callback = callback
+    
+    def save_model(self, path=None):
+        """Save the trained model to disk with error handling"""
+        try:
+            save_path = path or self.model_path
+            # Create a copy of the model without the callback
+            model_copy = ParallelMemoryAugmentedCTGAN(
+                memory_size=self.memory_size,
+                n_jobs=self.n_jobs,
+                model_path=self.model_path
+            )
+            model_copy.__dict__.update({
+                k: v for k, v in self.__dict__.items() 
+                if k != '_progress_callback'
+            })
+            
+            # Save the copy
+            joblib.dump(model_copy, save_path, compress=3)
+            print(f"Model saved successfully to {save_path}")
+            return True
+        except Exception as e:
+            print(f"Error saving model: {str(e)}")
+            if os.path.exists(save_path):
+                os.remove(save_path)
+            return False
+
+    @classmethod
+    def load_model(cls, path):
+        """Load a trained model from disk with error handling"""
+        try:
+            if not os.path.exists(path):
+                print(f"No model file found at {path}")
+                return None
+            
+            model = joblib.load(path)
+            print(f"Model loaded successfully from {path}")
+            return model
+        except Exception as e:
+            print(f"Error loading model: {str(e)}")
+            if os.path.exists(path):
+                print(f"Removing corrupted model file: {path}")
+                os.remove(path)
+            return None
         
     def parallel_sample(self, n, batch_size=1000):
         """Sample data in parallel"""
@@ -67,78 +159,108 @@ def generate_synthetic_finance_data(
     selected_features=None,
     memory_size=10000,
     n_jobs=-1,
-    progress_callback=None
+    progress_callback=None,
+    model_path='trained_ctgan_model.pkl',
+    force_retrain=False
 ):
-    # Set default callback if none provided
+    """Modified function with robust model saving/loading capability"""
     if progress_callback is None:
-        progress_callback = lambda stage, progress, message: None
+        def progress_callback(stage, progress, message):
+            if stage != "training":
+                print(f"{stage.capitalize()}: {message} ({progress*100:.1f}%)")
     
-    # Set random seed for reproducibility
-    np.random.seed(42)
-    torch.manual_seed(42)
-    
-    n_jobs = n_jobs if n_jobs > 0 else mp.cpu_count()
-    initial_samples = 25_000  # Reduced from 100_000
-    
-    print(f"Generating initial training data using {n_jobs} processes...")
-    
-    # Prepare batch parameters for parallel processing
-    batch_params = [
-        (min(batch_size, initial_samples - i), 42 + i, selected_features)
-        for i in range(0, initial_samples, batch_size)
-    ]
-    
-    # Generate initial training data in parallel
-    with ProcessPoolExecutor(max_workers=n_jobs) as executor:
-        data_batches = list(tqdm(
-            executor.map(generate_batch, batch_params),
-            total=len(batch_params)
-        ))
-    
-    train_df = pd.concat(data_batches, ignore_index=True)
-    del data_batches
-    gc.collect()
+    # Try to load existing model
+    ctgan = None
+    if not force_retrain:
+        progress_callback("loading", 0.0, "Attempting to load pre-trained model...")
+        ctgan = ParallelMemoryAugmentedCTGAN.load_model(model_path)
+        if ctgan is not None:
+            progress_callback("loading", 1.0, "Model loaded successfully!")
 
-    # During CTGAN training, update progress
-    class ProgressCallback:
-        def __init__(self, epochs):
-            self.epochs = epochs
-            self.current = 0
-            
-        def __call__(self, epoch, *args):
-            self.current = epoch
-            progress = epoch / self.epochs
-            progress_callback("training", progress, f"Training epoch {epoch}/{self.epochs}")
-    
-    # Initialize and train Parallel Memory-Augmented CTGAN with fewer epochs
-    print("Training Parallel Memory-Augmented CTGAN model...")
-    epochs = 100
-    progress_tracker = ProgressCallback(epochs)
-    
-    ctgan = ParallelMemoryAugmentedCTGAN(
-        memory_size=memory_size,
-        epochs=epochs,
-        batch_size=500,
-        verbose=True,
-        n_jobs=n_jobs
-    )
-    
-    # Add progress tracking to CTGAN training
-    ctgan._train_epochs = lambda *args, **kwargs: (
-        progress_tracker(i) or original_train_epochs(*args, **kwargs)
-        for i, original_train_epochs in enumerate(range(epochs))
-    )
-    
-    discrete_columns = [
-        'transaction_type', 
-        'merchant_category',
-        'bank_type',
-        'city',
-        'is_fraud'
-    ]
+    if ctgan is None:
+        # Training new model
+        progress_callback("training", 0.0, "Starting new model training...")
+        
+        # Set random seed for reproducibility
+        np.random.seed(42)
+        torch.manual_seed(42)
+        
+        n_jobs = n_jobs if n_jobs > 0 else mp.cpu_count()
+        initial_samples = 25_000  # Reduced from 100_000
+        
+        print(f"Generating initial training data using {n_jobs} processes...")
+        
+        # Prepare batch parameters for parallel processing
+        batch_params = [
+            (min(batch_size, initial_samples - i), 42 + i, selected_features)
+            for i in range(0, initial_samples, batch_size)
+        ]
+        
+        # Generate initial training data in parallel
+        with ProcessPoolExecutor(max_workers=n_jobs) as executor:
+            data_batches = list(tqdm(
+                executor.map(generate_batch, batch_params),
+                total=len(batch_params)
+            ))
+        
+        train_df = pd.concat(data_batches, ignore_index=True)
+        del data_batches
+        gc.collect()
 
-    # Fit the model
-    ctgan.fit(train_df, discrete_columns=discrete_columns)
+        # During CTGAN training, update progress
+        class ProgressCallback:
+            def __init__(self, epochs):
+                self.epochs = epochs
+                self.current = 0
+                
+            def __call__(self, epoch, *args):
+                self.current = epoch
+                progress = epoch / self.epochs
+                progress_callback("training", progress, f"Training epoch {epoch}/{self.epochs}")
+        
+        # Initialize and train Parallel Memory-Augmented CTGAN with fewer epochs
+        print("Training Parallel Memory-Augmented CTGAN model...")
+        epochs = 100
+        progress_tracker = ProgressCallback(epochs)
+        
+        # Initialize CTGAN with smaller epochs for faster training
+        ctgan = ParallelMemoryAugmentedCTGAN(
+            memory_size=memory_size,
+            epochs=50,  # Reduced epochs
+            batch_size=500,
+            verbose=True,
+            n_jobs=n_jobs,
+            model_path=model_path,
+            embedding_dim=128,  # Added for better stability
+            generator_dim=(256, 256),
+            discriminator_dim=(256, 256)
+        )
+        
+        # Set the progress callback
+        ctgan.set_progress_callback(progress_callback)
+        
+        # Fit the model with discrete columns
+        discrete_columns = [
+            'transaction_type', 
+            'merchant_category',
+            'bank_type',
+            'city',
+            'is_fraud'
+        ]
+        
+        try:
+            ctgan.fit(train_df, discrete_columns=discrete_columns)
+            print("Model training completed successfully!")
+        except Exception as e:
+            print(f"Error during training: {str(e)}")
+            raise
+        
+        # Save model with error handling
+        if not ctgan.save_model(model_path):
+            print("Warning: Failed to save model, but continuing with data generation...")
+
+    # Generate synthetic data using loaded/trained model
+    progress_callback("generating", 0.0, "Generating synthetic data...")
     
     # Generate synthetic data in parallel batches
     print(f"Generating {num_samples} synthetic samples in parallel...")
