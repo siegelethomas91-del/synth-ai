@@ -154,6 +154,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📞 Contact
 
-Your Name - [@ironicllykush](https://twitter.com/ironicallykushh)
+Kushagra - [@ironicllykush](https://twitter.com/ironicallykushh)
 Project Link: [https://github.com/kush-cpu/synth-ai](https://github.com/kush-cpu/synth-ai)
 
