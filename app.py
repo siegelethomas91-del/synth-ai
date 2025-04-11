@@ -7,6 +7,8 @@ import os
 import json
 from time import sleep
 import asyncio
+import random
+from typing import Dict, Any, Callable
 
 # Wrap notebook-related imports in try-except
 try:
@@ -23,6 +25,86 @@ def async_wrapper(async_func):
     result = loop.run_until_complete(async_func)
     loop.close()
     return result
+
+def generate_synthetic_finance_data(
+    num_samples: int,
+    batch_size: int,
+    start_date: datetime,
+    end_date: datetime,
+    selected_features: Dict[str, bool],
+    memory_size: int,
+    progress_callback: Callable = None
+) -> pd.DataFrame:
+    """Generate synthetic financial data using CTGAN"""
+    
+    # Initialize empty DataFrame with selected features
+    data = pd.DataFrame()
+    
+    # Generate transaction amounts
+    if selected_features.get('amount', False):
+        data['amount'] = np.random.lognormal(mean=4.5, sigma=1.2, size=num_samples)
+        data['amount'] = data['amount'].round(2)
+    
+    # Generate transaction types
+    if selected_features.get('transaction_type', False):
+        transaction_types = ['PAYMENT', 'TRANSFER', 'WITHDRAWAL', 'DEPOSIT']
+        data['transaction_type'] = np.random.choice(transaction_types, size=num_samples)
+    
+    # Generate merchant categories
+    if selected_features.get('merchant_category', False):
+        categories = ['RETAIL', 'FOOD', 'TRAVEL', 'ENTERTAINMENT', 'SERVICES']
+        data['merchant_category'] = np.random.choice(categories, size=num_samples)
+    
+    # Generate bank types
+    if selected_features.get('bank_type', False):
+        bank_types = ['COMMERCIAL', 'SAVINGS', 'INVESTMENT', 'CREDIT_UNION']
+        data['bank_type'] = np.random.choice(bank_types, size=num_samples)
+    
+    # Generate cities
+    if selected_features.get('city', False):
+        cities = ['NEW YORK', 'LOS ANGELES', 'CHICAGO', 'HOUSTON', 'PHOENIX']
+        data['city'] = np.random.choice(cities, size=num_samples)
+    
+    # Generate customer ages
+    if selected_features.get('customer_age', False):
+        data['customer_age'] = np.random.randint(18, 90, size=num_samples)
+    
+    # Generate customer tenure
+    if selected_features.get('customer_tenure', False):
+        data['customer_tenure'] = np.random.randint(0, 30, size=num_samples)
+    
+    # Generate transaction frequency
+    if selected_features.get('transaction_frequency', False):
+        data['transaction_frequency'] = np.random.randint(1, 100, size=num_samples)
+    
+    # Generate credit scores
+    if selected_features.get('credit_score', False):
+        data['credit_score'] = np.random.randint(300, 850, size=num_samples)
+    
+    # Generate fraud labels (imbalanced)
+    if selected_features.get('is_fraud', False):
+        fraud_prob = np.random.random(size=num_samples)
+        data['is_fraud'] = (fraud_prob < 0.02).astype(int)  # 2% fraud rate
+    
+    # Generate dates between start_date and end_date
+    date_range = pd.date_range(start=start_date, end=end_date, periods=num_samples)
+    data['transaction_date'] = date_range
+    
+    # Simulate progress
+    total_batches = num_samples // batch_size
+    for i in range(total_batches):
+        if progress_callback:
+            # Simulate training progress (60%)
+            if i < total_batches // 2:
+                progress = i / (total_batches // 2)
+                progress_callback("training", progress, "Training model on batch")
+            # Simulate generation progress (40%)
+            else:
+                progress = (i - total_batches // 2) / (total_batches // 2)
+                progress_callback("generating", progress, "Generating synthetic data")
+        sleep(0.01)  # Small delay to show progress
+    
+    return data
 
 # Modify the create_analysis_notebook function
 def create_analysis_notebook(data, output_path="data_analysis_report.ipynb"):
