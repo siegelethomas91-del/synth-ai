@@ -3,3 +3,6 @@ pandas
 scikit-learn
 opencv-python
 sdv
+torch>=2.0.0
+memory_profiler>=0.60.0
+transformers>=4.30.0

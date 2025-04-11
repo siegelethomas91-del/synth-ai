@@ -9,6 +9,15 @@ from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
 import os
 import json
 from time import sleep
+import asyncio
+
+# Instead of direct async calls, use this wrapper
+def async_wrapper(async_func):
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    result = loop.run_until_complete(async_func)
+    loop.close()
+    return result
 
 def create_analysis_notebook(data, output_path="data_analysis_report.ipynb"):
     """Create a Jupyter notebook with data analysis"""
