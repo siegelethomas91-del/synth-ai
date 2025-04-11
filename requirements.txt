@@ -6,3 +6,5 @@ sdv
 torch>=2.0.0
 memory_profiler>=0.60.0
 transformers>=4.30.0
+plotly>=5.13.0
+nbformat>=5.7.0

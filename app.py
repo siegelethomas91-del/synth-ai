@@ -1,15 +1,20 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from synthetic_finance_data_generator import ParallelMemoryAugmentedCTGAN, generate_synthetic_finance_data
 import plotly.express as px
 from datetime import datetime
-import nbformat
-from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
 import os
 import json
 from time import sleep
 import asyncio
+
+# Wrap notebook-related imports in try-except
+try:
+    import nbformat
+    from nbformat.v4 import new_notebook, new_markdown_cell, new_code_cell
+    NOTEBOOK_SUPPORT = True
+except ImportError:
+    NOTEBOOK_SUPPORT = False
 
 # Instead of direct async calls, use this wrapper
 def async_wrapper(async_func):
@@ -19,30 +24,40 @@ def async_wrapper(async_func):
     loop.close()
     return result
 
+# Modify the create_analysis_notebook function
 def create_analysis_notebook(data, output_path="data_analysis_report.ipynb"):
     """Create a Jupyter notebook with data analysis"""
-    nb = new_notebook()
-    
-    # Add markdown cells
-    nb['cells'] = [
-        new_markdown_cell("# Synthetic Financial Data Analysis Report"),
-        new_markdown_cell("## Data Overview"),
-        new_code_cell("import pandas as pd\nimport numpy as np\nimport plotly.express as px\n"
-                     "df = pd.read_csv('synthetic_finance_data_ctgan.csv')"),
-        new_code_cell("df.head()"),
-        new_code_cell("df.describe()"),
-        new_markdown_cell("## Distribution Analysis"),
-        new_code_cell("px.histogram(df, x='amount', title='Transaction Amount Distribution').show()"),
-        new_code_cell("px.box(df, x='transaction_type', y='amount', title='Amount by Transaction Type').show()"),
-        new_markdown_cell("## Fraud Analysis"),
-        new_code_cell("fraud_dist = df['is_fraud'].value_counts(normalize=True)\n"
-                     "px.pie(values=fraud_dist.values, names=fraud_dist.index, "
-                     "title='Fraud Distribution').show()"),
-    ]
-    
-    # Save notebook
-    with open(output_path, 'w') as f:
-        nbformat.write(nb, f)
+    if not NOTEBOOK_SUPPORT:
+        st.error("Notebook generation is not available. Please install nbformat package.")
+        return False
+        
+    try:
+        nb = new_notebook()
+        
+        # Add markdown cells
+        nb['cells'] = [
+            new_markdown_cell("# Synthetic Financial Data Analysis Report"),
+            new_markdown_cell("## Data Overview"),
+            new_code_cell("import pandas as pd\nimport numpy as np\nimport plotly.express as px\n"
+                         "df = pd.read_csv('synthetic_finance_data_ctgan.csv')"),
+            new_code_cell("df.head()"),
+            new_code_cell("df.describe()"),
+            new_markdown_cell("## Distribution Analysis"),
+            new_code_cell("px.histogram(df, x='amount', title='Transaction Amount Distribution').show()"),
+            new_code_cell("px.box(df, x='transaction_type', y='amount', title='Amount by Transaction Type').show()"),
+            new_markdown_cell("## Fraud Analysis"),
+            new_code_cell("fraud_dist = df['is_fraud'].value_counts(normalize=True)\n"
+                         "px.pie(values=fraud_dist.values, names=fraud_dist.index, "
+                         "title='Fraud Distribution').show()"),
+        ]
+        
+        # Save notebook
+        with open(output_path, 'w') as f:
+            nbformat.write(nb, f)
+        return True
+    except Exception as e:
+        st.error(f"Error creating notebook: {str(e)}")
+        return False
 
 def main():
     st.set_page_config(
@@ -196,8 +211,12 @@ def main():
             st.subheader("Export Options")
             
             if st.button("Generate Analysis Report"):
-                create_analysis_notebook(data)
-                st.success("Analysis report generated as 'data_analysis_report.ipynb'!")
+                if NOTEBOOK_SUPPORT:
+                    success = create_analysis_notebook(data)
+                    if success:
+                        st.success("Analysis report generated as 'data_analysis_report.ipynb'!")
+                else:
+                    st.warning("Notebook generation requires additional packages. Please install nbformat.")
             
             if st.button("Export to CSV"):
                 data.to_csv("synthetic_finance_data_export.csv", index=False)
