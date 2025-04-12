@@ -15,34 +15,135 @@ import os
 import joblib
 from datetime import datetime
 from ctgan.data_transformer import DataTransformer
+import scipy.stats as stats
+from sklearn.preprocessing import MinMaxScaler
 
 def generate_batch(batch_params):
-    """Helper function to generate a single batch of data"""
+    """Helper function to generate a single batch of data with improved distributions"""
     batch_size, seed, features = batch_params
     np.random.seed(seed)
     
-    transaction_types = ['Credit Card', 'Debit Card', 'UPI', 'Net Banking', 'RTGS/NEFT']
-    merchant_categories = ['Retail', 'Travel', 'Entertainment', 'Grocery', 'Online Shopping']
-    bank_types = ['Public', 'Private', 'International']
-    cities = ['Mumbai', 'Delhi', 'Bangalore', 'Chennai', 'Kolkata', 'Hyderabad']
-    
-    data_batch = {
-        'amount': np.random.lognormal(mean=8.5, sigma=1.2, size=batch_size),
-        'transaction_type': np.random.choice(transaction_types, size=batch_size),
-        'merchant_category': np.random.choice(merchant_categories, size=batch_size),
-        'bank_type': np.random.choice(bank_types, size=batch_size),
-        'city': np.random.choice(cities, size=batch_size),
-        'customer_age': np.random.normal(35, 12, batch_size).astype(int),
-        'customer_tenure': np.random.normal(5, 3, batch_size).astype(int),
-        'transaction_frequency': np.random.poisson(5, size=batch_size),
-        'credit_score': np.random.normal(700, 100, batch_size).clip(300, 900).astype(int),
-        'is_fraud': np.random.choice([0, 1], size=batch_size, p=[0.995, 0.005])
+    # Define more realistic category weights
+    transaction_types = {
+        'Debit Card': 0.45,
+        'Credit Card': 0.25,
+        'UPI': 0.20,
+        'Net Banking': 0.07,
+        'RTGS/NEFT': 0.03
     }
     
-    if features:
-        data_batch = {k: v for k, v in data_batch.items() if features.get(k, True)}
+    merchant_categories = {
+        'Retail': 0.35,
+        'Grocery': 0.25,
+        'Online Shopping': 0.20,
+        'Entertainment': 0.15,
+        'Travel': 0.05
+    }
     
-    return pd.DataFrame(data_batch)
+    # Time-based patterns
+    hour_of_day = np.random.normal(14, 4, batch_size)  # More transactions during business hours
+    day_of_week = np.random.choice(range(7), size=batch_size, 
+                                 p=[0.12, 0.15, 0.15, 0.15, 0.15, 0.18, 0.10])  # Weekend pattern
+    
+    data_batch = {
+        'amount': generate_realistic_amounts(batch_size),
+        'transaction_type': np.random.choice(
+            list(transaction_types.keys()),
+            size=batch_size,
+            p=list(transaction_types.values())
+        ),
+        'merchant_category': np.random.choice(
+            list(merchant_categories.keys()),
+            size=batch_size,
+            p=list(merchant_categories.values())
+        ),
+        'bank_type': generate_bank_types(batch_size),
+        'city': generate_city_distribution(batch_size),
+        'customer_age': generate_age_distribution(batch_size),
+        'customer_tenure': None,  # Will be set based on age
+        'transaction_frequency': None,  # Will be set based on age and credit score
+        'credit_score': generate_credit_score_distribution(batch_size),
+        'hour_of_day': hour_of_day,
+        'day_of_week': day_of_week,
+        'is_fraud': generate_fraud_cases(batch_size)
+    }
+    
+    # Convert to DataFrame for relationship validation
+    df = pd.DataFrame(data_batch)
+    df = validate_relationships(df)
+    
+    if features:
+        df = df[[k for k, v in features.items() if v]]
+    
+    return df
+
+def generate_realistic_amounts(size):
+    """Generate realistic transaction amounts with multiple distributions"""
+    # Mix of different amount patterns
+    small_transactions = np.random.lognormal(3, 0.5, size=int(size * 0.6))  # Regular purchases
+    medium_transactions = np.random.lognormal(5, 0.7, size=int(size * 0.3))  # Larger purchases
+    large_transactions = np.random.lognormal(8, 1.0, size=size - int(size * 0.9))  # Big tickets
+    
+    amounts = np.concatenate([small_transactions, medium_transactions, large_transactions])
+    np.random.shuffle(amounts)
+    return np.round(amounts, 2)[:size]
+
+def generate_age_distribution(size):
+    """Generate realistic age distribution"""
+    # Multi-modal distribution for different age groups
+    young = np.random.normal(25, 3, size=int(size * 0.3))
+    middle = np.random.normal(40, 5, size=int(size * 0.5))
+    senior = np.random.normal(60, 5, size=size - int(size * 0.8))
+    
+    ages = np.concatenate([young, middle, senior])
+    np.random.shuffle(ages)
+    return np.clip(ages, 18, 90).astype(int)[:size]
+
+def validate_relationships(data):
+    """Validate and adjust data relationships"""
+    # Age-Credit Score Relationship
+    data['credit_score'] = data.apply(lambda row: 
+        adjust_credit_score(row['customer_age'], row['credit_score']), axis=1)
+    
+    # Age-Tenure Relationship
+    data['customer_tenure'] = data.apply(lambda row:
+        min(row['customer_tenure'], row['customer_age'] - 18), axis=1)
+    
+    # Amount-Merchant Category Relationship
+    data['amount'] = data.apply(lambda row:
+        adjust_amount_by_category(row['amount'], row['merchant_category']), axis=1)
+    
+    # Transaction Frequency based on Age and Credit Score
+    data['transaction_frequency'] = data.apply(lambda row:
+        adjust_transaction_frequency(row['customer_age'], row['credit_score']), axis=1)
+    
+    return data
+
+def adjust_credit_score(age, score):
+    """Adjust credit score based on age"""
+    if age < 25:
+        return min(score, 750)  # Young customers rarely have perfect scores
+    elif age > 60:
+        return max(score, 600)  # Older customers usually maintain baseline scores
+    return score
+
+def adjust_amount_by_category(amount, category):
+    """Adjust transaction amount based on merchant category"""
+    category_multipliers = {
+        'Retail': 1.0,
+        'Travel': 2.5,
+        'Entertainment': 1.2,
+        'Grocery': 0.5,
+        'Online Shopping': 0.8
+    }
+    return amount * category_multipliers.get(category, 1.0)
+
+def adjust_transaction_frequency(age, credit_score):
+    """Adjust transaction frequency based on age and credit score"""
+    base_frequency = np.random.poisson(5)
+    age_factor = min(1.5, max(0.5, age / 40))
+    credit_factor = min(1.5, max(0.5, credit_score / 700))
+    return int(base_frequency * age_factor * credit_factor)
 
 # Modify the ParallelMemoryAugmentedCTGAN class to handle training properly
 class ParallelMemoryAugmentedCTGAN(CTGAN):
@@ -161,7 +262,8 @@ def generate_synthetic_finance_data(
     n_jobs=-1,
     progress_callback=None,
     model_path='trained_ctgan_model.pkl',
-    force_retrain=False
+    force_retrain=False,
+    real_data_path=None  # Add this parameter
 ):
     """Modified function with robust model saving/loading capability"""
     if progress_callback is None:
@@ -274,6 +376,7 @@ def generate_synthetic_finance_data(
     
     # Post-process the data
     print("Post-processing generated data...")
+    synthetic_data = validate_relationships(synthetic_data)
     with ThreadPoolExecutor(max_workers=n_jobs) as executor:
         # Post-process columns in parallel
         futures = []
@@ -311,6 +414,42 @@ def generate_synthetic_finance_data(
     with ThreadPoolExecutor(max_workers=n_jobs) as executor:
         list(tqdm(executor.map(save_chunk, chunks), total=len(chunks)))
     
+    # Initialize data quality validator
+    validator = DataQualityValidator()
+    if real_data_path and os.path.exists(real_data_path):
+        real_data = pd.read_csv(real_data_path)
+        validator.set_real_data(real_data)
+        print("Loaded real data for quality validation")
+    
+    # Validate synthetic data quality
+    if validator.real_data is not None:
+        print("\nValidating synthetic data quality...")
+        quality_metrics = validator.validate_distributions(synthetic_data)
+        
+        # Print quality report
+        print("\nData Quality Report:")
+        print("-------------------")
+        print(f"Correlation Preservation Score: {quality_metrics['correlation_preservation']:.3f}")
+        
+        print("\nNumerical Column Similarities:")
+        for col, metrics in quality_metrics['numerical_similarity'].items():
+            print(f"\n{col}:")
+            print(f"  KS Statistic: {metrics['ks_statistic']:.3f}")
+            print(f"  P-value: {metrics['p_value']:.3f}")
+            print(f"  Mean Difference: {metrics['mean_difference']:.3f}")
+            print(f"  Std Difference: {metrics['std_difference']:.3f}")
+        
+        print("\nCategorical Column Similarities:")
+        for col, metrics in quality_metrics['categorical_similarity'].items():
+            print(f"\n{col}:")
+            print(f"  Chi2 Statistic: {metrics['chi2_statistic']:.3f}")
+            print(f"  P-value: {metrics['p_value']:.3f}")
+            print(f"  Jensen-Shannon Divergence: {metrics['jsd']:.3f}")
+        
+        print("\nBias Metrics:")
+        for metric, value in quality_metrics['bias_metrics'].items():
+            print(f"  {metric}: {value:.3f}")
+    
     progress_callback("generating", 1.0, "Finalizing data generation")
     
     print(f"Final data shape: {synthetic_data.shape}")
@@ -324,6 +463,7 @@ if __name__ == "__main__":
     # Generate data using parallel processing with smaller sample size
     data = generate_synthetic_finance_data(
         num_samples=100_000,  # Reduced from 1,000,000
-        n_jobs=num_cores-1  # Leave one core free for system processes
+        n_jobs=num_cores-1,  # Leave one core free for system processes
+        real_data_path='real_finance_data.csv'  # Specify path to real data
     )
     print(f"Generated {len(data)} synthetic finance records")

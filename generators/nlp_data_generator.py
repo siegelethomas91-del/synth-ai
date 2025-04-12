@@ -1,4 +1,4 @@
-from ecommerce_nlp_generator import EcommerceNLPDataGenerator
+from generators.ecommerce_nlp_generator import EcommerceNLPDataGenerator
 import pandas as pd
 import os
 import json

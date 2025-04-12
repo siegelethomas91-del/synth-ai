@@ -10,6 +10,7 @@ import asyncio
 import random
 from typing import Dict, Any, Callable
 from data_engines import DataEngine
+from utils.data_quality_validator import DataQualityValidator
 
 # Wrap notebook-related imports in try-except
 try:
@@ -253,6 +254,16 @@ def main():
         step=1000
     )
     
+    # Add real data upload option
+    st.sidebar.header("Real Data Comparison")
+    uploaded_file = st.sidebar.file_uploader("Upload real data for comparison (CSV)", type=['csv'])
+    
+    if uploaded_file is not None:
+        real_data = pd.read_csv(uploaded_file)
+        st.sidebar.success("Real data uploaded successfully!")
+    else:
+        real_data = None
+    
     # Generate button with engine-specific handling
     if st.button(f"Generate {selected_engine} Data"):
         progress_bar = st.progress(0)
@@ -301,6 +312,33 @@ def main():
                 - Features: {len(data.columns)} columns
                 - Memory Used: {data.memory_usage().sum() / 1024**2:.1f} MB
             """)
+            
+            # Add Data Quality Analysis tab
+            st.subheader("Data Quality Analysis")
+            
+            # Initialize validator
+            validator = DataQualityValidator(data)
+            
+            # Compare with real data if available
+            comparison_results = validator.compare_with_real_data(real_data)
+            
+            # Display quality report with comparisons
+            with st.expander("View Data Quality Report", expanded=True):
+                validator.display_quality_report()
+                
+                if comparison_results:
+                    st.subheader("Data Quality Comparison")
+                    
+                    if 'uploaded' in comparison_results:
+                        st.write("### Comparison with Uploaded Data")
+                        st.write("Statistical similarity between synthetic and real data:")
+                        metrics_df = pd.DataFrame(comparison_results['uploaded'], index=[0])
+                        st.dataframe(metrics_df)
+                    
+                    if 'benchmarks' in comparison_results:
+                        st.write("### Comparison with Industry Benchmarks")
+                        metrics_df = pd.DataFrame(comparison_results['benchmarks'], index=[0])
+                        st.dataframe(metrics_df)
             
             # Add CSV export button
             csv = data.to_csv(index=False)
