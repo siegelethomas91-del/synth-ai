@@ -9,6 +9,7 @@ from time import sleep
 import asyncio
 import random
 from typing import Dict, Any, Callable
+from data_engines import DataEngine
 
 # Wrap notebook-related imports in try-except
 try:
@@ -154,9 +155,20 @@ def main():
             SynthAI: Advanced Synthetic Data Generator
         </h1>
         <p style='text-align: center; color: #666666;'>
-            Powered by Memory-Augmented CTGAN
+            Multi-Domain Synthetic Data Generation Platform
         </p>
     """, unsafe_allow_html=True)
+    
+    # Engine Selection
+    st.sidebar.header("Engine Selection")
+    selected_engine = st.sidebar.selectbox(
+        "Select Data Engine",
+        options=[engine.value for engine in DataEngine],
+        key="engine_select"
+    )
+    
+    # Convert string back to enum
+    current_engine = DataEngine(selected_engine)
     
     st.sidebar.header("Configuration")
     
@@ -179,20 +191,9 @@ def main():
         value=datetime(2023, 12, 31)
     )
     
-    # Feature selection
+    # Dynamic Feature Selection based on engine
     st.sidebar.header("Feature Selection")
-    available_features = {
-        'amount': True,
-        'transaction_type': True,
-        'merchant_category': True,
-        'bank_type': True,
-        'city': True,
-        'customer_age': True,
-        'customer_tenure': True,
-        'transaction_frequency': True,
-        'credit_score': True,
-        'is_fraud': True
-    }
+    available_features = current_engine.get_features()
     
     selected_features = {}
     for feature, default in available_features.items():
@@ -219,8 +220,8 @@ def main():
         step=1000
     )
     
-    if st.button("Generate Data"):
-        # Create placeholder for progress bar and status
+    # Generate button with engine-specific handling
+    if st.button(f"Generate {selected_engine} Data"):
         progress_bar = st.progress(0)
         status_container = st.empty()
         info_container = st.empty()
@@ -238,72 +239,43 @@ def main():
             # Custom progress callback
             def progress_callback(stage, progress, message):
                 if stage == "training":
-                    progress_bar.progress(progress * 0.6)  # Training takes 60% of progress
-                    status_container.info(f"Training CTGAN: {progress*100:.1f}%")
+                    progress_bar.progress(progress * 0.6)
+                    status_container.info(f"Training Model: {progress*100:.1f}%")
                     info_container.markdown(f"""
                         **Current Status:**
-                        - Stage: Training CTGAN Model
+                        - Engine: {selected_engine}
+                        - Stage: Training Model
                         - Message: {message}
-                        - Epochs Progress: {progress*100:.1f}%
+                        - Progress: {progress*100:.1f}%
                     """)
                 elif stage == "generating":
-                    progress_bar.progress(0.6 + progress * 0.4)  # Generation takes 40%
+                    progress_bar.progress(0.6 + progress * 0.4)
                     status_container.info(f"Generating Data: {progress*100:.1f}%")
-                    info_container.markdown(f"""
-                        **Current Status:**
-                        - Stage: Generating Synthetic Data
-                        - Message: {message}
-                        - Generation Progress: {progress*100:.1f}%
-                    """)
             
-            # Add callback to params
             params['progress_callback'] = progress_callback
             
-            # Generate data
-            data = generate_synthetic_finance_data(**params)
+            # Select appropriate generator based on engine
+            if current_engine == DataEngine.FINANCE:
+                data = generate_synthetic_finance_data(**params)
+            elif current_engine == DataEngine.HEALTHCARE:
+                data = generate_synthetic_healthcare_data(**params)
+            elif current_engine == DataEngine.LLM:
+                data = nlp_data_generator(**params)
             
-            # Clear progress indicators
-            progress_bar.empty()
-            status_container.empty()
-            info_container.empty()
-            
-            # Success message with stats
+            # Display results
             st.success(f"""
-                ✅ Successfully generated {len(data):,} records!
+                ✅ Successfully generated {len(data):,} {selected_engine} records!
                 - Features: {len(data.columns)} columns
                 - Memory Used: {data.memory_usage().sum() / 1024**2:.1f} MB
             """)
             
-            # Display sample of generated data
+            # Display sample and visualizations
             st.subheader("Sample of Generated Data")
             st.dataframe(data.head())
             
-            # Basic visualizations
-            st.subheader("Data Visualizations")
+            # Engine-specific visualizations
+            show_visualizations(data, current_engine)
             
-            # Amount distribution
-            fig_amount = px.histogram(data, x='amount', title='Transaction Amount Distribution')
-            st.plotly_chart(fig_amount)
-            
-            # Fraud distribution
-            fig_fraud = px.pie(data, names='is_fraud', title='Fraud Distribution')
-            st.plotly_chart(fig_fraud)
-            
-            # Export options
-            st.subheader("Export Options")
-            
-            if st.button("Generate Analysis Report"):
-                if NOTEBOOK_SUPPORT:
-                    success = create_analysis_notebook(data)
-                    if success:
-                        st.success("Analysis report generated as 'data_analysis_report.ipynb'!")
-                else:
-                    st.warning("Notebook generation requires additional packages. Please install nbformat.")
-            
-            if st.button("Export to CSV"):
-                data.to_csv("synthetic_finance_data_export.csv", index=False)
-                st.success("Data exported to 'synthetic_finance_data_export.csv'!")
-                
         except Exception as e:
             st.error(f"❌ An error occurred: {str(e)}")
             st.stop()
