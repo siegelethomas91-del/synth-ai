@@ -117,30 +117,63 @@ def create_analysis_notebook(data, output_path="data_analysis_report.ipynb"):
     try:
         nb = new_notebook()
         
-        # Add markdown cells
+        # Add cells with dynamic column names
         nb['cells'] = [
             new_markdown_cell("# Synthetic Financial Data Analysis Report"),
             new_markdown_cell("## Data Overview"),
-            new_code_cell("import pandas as pd\nimport numpy as np\nimport plotly.express as px\n"
-                         "df = pd.read_csv('synthetic_finance_data_ctgan.csv')"),
+            new_code_cell("import pandas as pd\nimport numpy as np\nimport plotly.express as px"),
+            new_code_cell("# Load the data\ndf = pd.DataFrame(" + data.to_dict().__str__() + ")"),
             new_code_cell("df.head()"),
             new_code_cell("df.describe()"),
             new_markdown_cell("## Distribution Analysis"),
-            new_code_cell("px.histogram(df, x='amount', title='Transaction Amount Distribution').show()"),
-            new_code_cell("px.box(df, x='transaction_type', y='amount', title='Amount by Transaction Type').show()"),
+            new_code_cell("if 'amount' in df.columns:\n    px.histogram(df, x='amount', title='Transaction Amount Distribution').show()"),
+            new_code_cell("if all(col in df.columns for col in ['transaction_type', 'amount']):\n    px.box(df, x='transaction_type', y='amount', title='Amount by Transaction Type').show()"),
             new_markdown_cell("## Fraud Analysis"),
-            new_code_cell("fraud_dist = df['is_fraud'].value_counts(normalize=True)\n"
-                         "px.pie(values=fraud_dist.values, names=fraud_dist.index, "
-                         "title='Fraud Distribution').show()"),
+            new_code_cell("if 'is_fraud' in df.columns:\n    fraud_dist = df['is_fraud'].value_counts(normalize=True)\n    px.pie(values=fraud_dist.values, names=fraud_dist.index, title='Fraud Distribution').show()")
         ]
         
-        # Save notebook
-        with open(output_path, 'w') as f:
-            nbformat.write(nb, f)
-        return True
+        # Write notebook to string instead of file
+        notebook_content = nbformat.writes(nb)
+        return notebook_content
+        
     except Exception as e:
         st.error(f"Error creating notebook: {str(e)}")
-        return False
+        return None
+
+def show_visualizations(data: pd.DataFrame, engine: DataEngine):
+    """Display engine-specific visualizations using plotly"""
+    try:
+        if engine == DataEngine.FINANCE:
+            # Transaction amount distribution
+            fig1 = px.histogram(data, x='amount', title='Transaction Amount Distribution')
+            st.plotly_chart(fig1)
+            
+            # Transaction types breakdown
+            if 'transaction_type' in data.columns:
+                fig2 = px.pie(data, names='transaction_type', title='Transaction Types Distribution')
+                st.plotly_chart(fig2)
+            
+            # Fraud analysis if available
+            if 'is_fraud' in data.columns:
+                fraud_dist = data['is_fraud'].value_counts()
+                fig3 = px.pie(values=fraud_dist.values, names=['Legitimate', 'Fraud'],
+                             title='Fraud Distribution')
+                st.plotly_chart(fig3)
+                
+        elif engine == DataEngine.HEALTHCARE:
+            # Add healthcare-specific visualizations here
+            if 'age' in data.columns:
+                fig1 = px.histogram(data, x='age', title='Age Distribution')
+                st.plotly_chart(fig1)
+                
+        elif engine == DataEngine.LLM:
+            # Add LLM-specific visualizations here
+            if 'text_length' in data.columns:
+                fig1 = px.histogram(data, x='text_length', title='Text Length Distribution')
+                st.plotly_chart(fig1)
+                
+    except Exception as e:
+        st.warning(f"Could not generate some visualizations: {str(e)}")
 
 def main():
     st.set_page_config(
@@ -269,12 +302,47 @@ def main():
                 - Memory Used: {data.memory_usage().sum() / 1024**2:.1f} MB
             """)
             
+            # Add CSV export button
+            csv = data.to_csv(index=False)
+            st.download_button(
+                label="Download CSV",
+                data=csv,
+                file_name=f"synthetic_{selected_engine.lower()}_data.csv",
+                mime="text/csv"
+            )
+            
             # Display sample and visualizations
             st.subheader("Sample of Generated Data")
             st.dataframe(data.head())
             
             # Engine-specific visualizations
             show_visualizations(data, current_engine)
+            
+            # Add notebook generation button in a separate container
+            notebook_container = st.container()
+            with notebook_container:
+                if NOTEBOOK_SUPPORT:
+                    generate_report = st.button("Generate Analysis Report", key="generate_report")
+                    
+                    if generate_report:
+                        with st.spinner("Generating analysis report..."):
+                            # Generate notebook content
+                            notebook_content = create_analysis_notebook(data)
+                            
+                            if notebook_content:
+                                st.download_button(
+                                    label="Download Analysis Report",
+                                    data=notebook_content,
+                                    file_name="data_analysis_report.ipynb",
+                                    mime="application/x-ipynb+json",
+                                    key="download_report"
+                                )
+                                st.success("Analysis report generated successfully!")
+                else:
+                    st.warning("""
+                        📝 Notebook generation requires the nbformat package. 
+                        Install with: `pip install nbformat`
+                    """)
             
         except Exception as e:
             st.error(f"❌ An error occurred: {str(e)}")
